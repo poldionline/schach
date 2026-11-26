@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Schach Online (WebRTC)</title>
+<style>
+:root{--bg:#1c1b22;--panel:#26252e;--txt:#eceaf2;--mut:#9b98ab;--acc:#7c6cf0;--light:#ecd9b0;--dark:#b0845a;--sel:#f6e05e;--ok:#4ade80;--bad:#f87171}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:16px}
+h1{margin:4px 0 12px;font-size:1.5rem}
+.wrap{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;width:100%;max-width:1000px}
+.panel{background:var(--panel);border-radius:14px;padding:16px;box-shadow:0 6px 24px #0006}
+#setup{width:100%;max-width:640px}
+button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:9px 14px;font-size:.95rem;cursor:pointer}
+button.sec{background:#3a3947}
+button:disabled{opacity:.4;cursor:default}
+button:hover:not(:disabled){filter:brightness(1.12)}
+textarea,input{width:100%;background:#16151b;color:var(--txt);border:1px solid #3a3947;border-radius:8px;padding:8px;font-family:monospace;font-size:.8rem}
+textarea{height:90px;resize:vertical}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.step{margin-top:12px}
+.step small,.hint{color:var(--mut)}
+#game{display:none}
+#boardwrap{position:relative}
+#board{display:grid;grid-template-columns:repeat(8,1fr);width:min(92vw,560px);aspect-ratio:1;border-radius:6px;overflow:hidden;box-shadow:0 6px 24px #0008;user-select:none}
+.sq{position:relative;display:flex;align-items:center;justify-content:center;font-size:min(9vw,56px);cursor:pointer;line-height:1}
+.sq.l{background:var(--light)}.sq.d{background:var(--dark)}
+.sq.last::before{content:"";position:absolute;inset:0;background:#f6e05e66}
+.sq.sel::before{content:"";position:absolute;inset:0;background:#f6e05eaa}
+.sq.chk::before{content:"";position:absolute;inset:0;background:radial-gradient(circle,#ef4444cc 0,#ef444400 75%)}
+.sq.mv::after{content:"";position:absolute;width:28%;height:28%;border-radius:50%;background:#00000030}
+.sq.cp::after{content:"";position:absolute;inset:4%;border-radius:50%;border:5px solid #00000035}
+.pc{position:relative;z-index:1;text-shadow:0 1px 2px #0006}
+.pc.w{color:#fff;-webkit-text-stroke:1.2px #222}
+.pc.b{color:#1d1d1f;-webkit-text-stroke:.6px #000}
+.co{position:absolute;font-size:.62rem;font-weight:700;opacity:.7;z-index:1}
+.co.r{top:2px;left:3px}.co.f{bottom:1px;right:3px}
+.sq.l .co{color:var(--dark)}.sq.d .co{color:var(--light)}
+#side{width:min(92vw,300px);display:flex;flex-direction:column;gap:12px}
+#status{font-weight:600;min-height:2.6em}
+#moves{height:150px;overflow:auto;font-size:.9rem;background:#16151b;border-radius:8px;padding:8px;line-height:1.6}
+#chatlog{height:110px;overflow:auto;font-size:.85rem;background:#16151b;border-radius:8px;padding:8px}
+#chatlog div{margin-bottom:3px}
+#banner{display:none;background:#3a3550;border-radius:8px;padding:10px;font-size:.9rem}
+#promo{display:none;position:absolute;inset:0;background:#000a;align-items:center;justify-content:center;gap:10px;z-index:5;border-radius:6px}
+#promo button{font-size:2.6rem;background:#fff;color:#111;padding:6px 14px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);margin-right:6px}
+.dot.on{background:var(--ok)}
+</style>
+</head>
+<body>
+<h1>♞ Schach Online <small style="font-size:.6em;color:var(--mut)">(WebRTC, Peer-to-Peer)</small></h1>
+
+<div id="setup" class="panel">
+  <div class="row">
+    <button id="bHost">Spiel erstellen</button>
+    <button id="bJoin" class="sec">Spiel beitreten</button>
+  </div>
+  <p class="hint">Es gibt keinen Server: Beide Spieler tauschen einmalig je einen Code aus (per WhatsApp, Mail usw.), danach läuft alles direkt zwischen den Browsern.</p>
+
+  <div id="hostBox" style="display:none">
+    <div class="step"><b>1.</b> Diesen Code an deinen Gegner schicken:
+      <textarea id="offerOut" readonly placeholder="Code wird erzeugt …"></textarea>
+      <div class="row"><button class="sec" onclick="copy('offerOut')">Kopieren</button></div></div>
+    <div class="step"><b>2.</b> Antwort-Code des Gegners hier einfügen:
+      <textarea id="answerIn" placeholder="Antwort-Code …"></textarea>
+      <div class="row"><button id="bAccept">Verbinden</button></div></div>
+  </div>
+
+  <div id="joinBox" style="display:none">
+    <div class="step"><b>1.</b> Code des Gastgebers hier einfügen:
+      <textarea id="offerIn" placeholder="Code vom Gastgeber …"></textarea>
+      <div class="row"><button id="bAnswer">Antwort erzeugen</button></div></div>
+    <div class="step"><b>2.</b> Diesen Antwort-Code an den Gastgeber zurückschicken:
+      <textarea id="answerOut" readonly></textarea>
+      <div class="row"><button class="sec" onclick="copy('answerOut')">Kopieren</button></div>
+      <small>Sobald der Gastgeber den Code eingefügt hat, startet das Spiel automatisch.</small></div>
+  </div>
+  <p id="setupMsg" class="hint"></p>
+</div>
+
+<div id="game" class="wrap">
+  <div id="boardwrap">
+    <div id="board"></div>
+    <div id="promo"></div>
+  </div>
+  <div id="side" class="panel">
+    <div><span class="dot" id="dot"></span><span id="conn">Verbunden</span></div>
+    <div id="status"></div>
+    <div id="banner"></div>
+    <div id="moves"></div>
+    <div class="row" style="margin:0">
+      <button class="sec" id="bDraw">Remis anbieten</button>
+      <button class="sec" id="bResign">Aufgeben</button>
+      <button id="bRematch" style="display:none">Revanche</button>
+    </div>
+    <div id="chatlog"></div>
+    <div class="row" style="margin:0"><input id="chatIn" placeholder="Nachricht …" style="font-family:inherit;font-size:.9rem"></div>
+  </div>
+</div>
+
+<script>
+/* ============ Schach-Engine ============ */
+const U={K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'};
+const N_OFF=[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+const ROOK=[[-1,0],[1,0],[0,-1],[0,1]], BISH=[[-1,-1],[-1,1],[1,-1],[1,1]];
+const col=p=>p===p.toUpperCase()?'w':'b';
+const opp=c=>c==='w'?'b':'w';
+const sqName=i=>'abcdefgh'[i&7]+(8-(i>>3));
+
+function newState(){
+  const b=[];
+  'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR'.split('/').forEach(r=>{
+    for(const ch of r){ if(/\d/.test(ch)) for(let i=0;i<+ch;i++) b.push(''); else b.push(ch); }
+  });
+  return {b,turn:'w',c:{K:1,Q:1,k:1,q:1},ep:-1,hm:0,fm:1};
+}
+const clone=s=>({b:s.b.slice(),turn:s.turn,c:{...s.c},ep:s.ep,hm:s.hm,fm:s.fm});
+
+function attacked(b,sq,by){
+  const r=sq>>3,c=sq&7;
+  const at=(rr,cc)=>(rr>=0&&rr<8&&cc>=0&&cc<8)?b[rr*8+cc]:'';
+  const pr=by==='w'?r+1:r-1, pp=by==='w'?'P':'p';
+  if(at(pr,c-1)===pp||at(pr,c+1)===pp) return true;
+  const n=by==='w'?'N':'n';
+  for(const [dr,dc] of N_OFF) if(at(r+dr,c+dc)===n) return true;
+  const k=by==='w'?'K':'k';
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++) if((dr||dc)&&at(r+dr,c+dc)===k) return true;
+  const q=by==='w'?'Q':'q', ro=by==='w'?'R':'r', bi=by==='w'?'B':'b';
+  const slide=(dirs,a)=>{
+    for(const [dr,dc] of dirs){
+      let rr=r+dr,cc=c+dc;
+      while(rr>=0&&rr<8&&cc>=0&&cc<8){
+        const p=b[rr*8+cc];
+        if(p){ if(p===q||p===a) return true; break; }
+        rr+=dr;cc+=dc;
+      }
+    }
+    return false;
+  };
+  return slide(ROOK,ro)||slide(BISH,bi);
+}
+const kingSq=(b,c)=>b.indexOf(c==='w'?'K':'k');
+
+function pseudo(s){
+  const out=[], b=s.b, me=s.turn;
+  const add=(from,to,extra={})=>{
+    const p=b[from];
+    if(p.toUpperCase()==='P' && ((to>>3)===0||(to>>3)===7)){
+      for(const pr of ['Q','R','B','N']) out.push({from,to,promo:pr});
+    } else out.push({from,to,...extra});
+  };
+  for(let i=0;i<64;i++){
+    const p=b[i]; if(!p||col(p)!==me) continue;
+    const t=p.toUpperCase(), r=i>>3, c=i&7;
+    if(t==='P'){
+      const dir=me==='w'?-1:1, start=me==='w'?6:1, one=i+dir*8;
+      if(!b[one]){ add(i,one); if(r===start&&!b[one+dir*8]) add(i,one+dir*8,{dbl:1}); }
+      for(const dc of [-1,1]){
+        const cc=c+dc; if(cc<0||cc>7) continue;
+        const to=(r+dir)*8+cc;
+        if(b[to]&&col(b[to])!==me) add(i,to);
+        else if(to===s.ep) add(i,to,{ep:1});
+      }
+    } else if(t==='N'||t==='K'){
+      const offs=t==='N'?N_OFF:[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+      for(const [dr,dc] of offs){
+        const rr=r+dr,cc=c+dc; if(rr<0||rr>7||cc<0||cc>7) continue;
+        const to=rr*8+cc; if(!b[to]||col(b[to])!==me) add(i,to);
+      }
+      if(t==='K'){
+        const en=opp(me), home=me==='w'?60:4;
+        if(i===home && !attacked(b,i,en)){
+          if(s.c[me==='w'?'K':'k'] && !b[i+1]&&!b[i+2] && b[i+3]===(me==='w'?'R':'r') && !attacked(b,i+1,en)&&!attacked(b,i+2,en))
+            add(i,i+2,{castle:1});
+          if(s.c[me==='w'?'Q':'q'] && !b[i-1]&&!b[i-2]&&!b[i-3] && b[i-4]===(me==='w'?'R':'r') && !attacked(b,i-1,en)&&!attacked(b,i-2,en))
+            add(i,i-2,{castle:1});
+        }
+      }
+    } else {
+      const dirs=t==='R'?ROOK:t==='B'?BISH:ROOK.concat(BISH);
+      for(const [dr,dc] of dirs){
+        let rr=r+dr,cc=c+dc;
+        while(rr>=0&&rr<8&&cc>=0&&cc<8){
+          const to=rr*8+cc;
+          if(!b[to]) add(i,to);
+          else { if(col(b[to])!==me) add(i,to); break; }
+          rr+=dr;cc+=dc;
+        }
+      }
+    }
+  }
+  return out;
+}
+function apply(s,m){
+  const n=clone(s), p=n.b[m.from], t=p.toUpperCase(), cap=n.b[m.to];
+  n.b[m.to]=m.promo?(s.turn==='w'?m.promo:m.promo.toLowerCase()):p;
+  n.b[m.from]='';
+  if(m.ep) n.b[m.to+(s.turn==='w'?8:-8)]='';
+  if(m.castle){
+    if(m.to>m.from){ n.b[m.from+1]=n.b[m.from+3]; n.b[m.from+3]=''; }
+    else { n.b[m.from-1]=n.b[m.from-4]; n.b[m.from-4]=''; }
+  }
+  if(t==='K'){ if(s.turn==='w'){n.c.K=0;n.c.Q=0;} else {n.c.k=0;n.c.q=0;} }
+  for(const q of [m.from,m.to]){ if(q===63)n.c.K=0; if(q===56)n.c.Q=0; if(q===7)n.c.k=0; if(q===0)n.c.q=0; }
+  n.ep=m.dbl?(m.from+m.to)/2:-1;
+  n.hm=(t==='P'||cap||m.ep)?0:s.hm+1;
+  if(s.turn==='b') n.fm++;
+  n.turn=opp(s.turn);
+  return n;
+}
+function legal(s){
+  return pseudo(s).filter(m=>{
+    const n=apply(s,m);
+    return !attacked(n.b,kingSq(n.b,s.turn),n.turn);
+  });
+}
+const inCheck=s=>attacked(s.b,kingSq(s.b,s.turn),opp(s.turn));
+function insufficient(b){
+  const ps=b.filter(x=>x&&x.toUpperCase()!=='K').map(x=>x.toUpperCase());
+  if(!ps.length) return true;
+  return ps.length===1&&(ps[0]==='B'||ps[0]==='N');
+}
+const posKey=s=>s.b.join('')+s.turn+JSON.stringify(s.c)+s.ep;
+
+/* ============ Spielzustand ============ */
+const $=id=>document.getElementById(id);
+let S,myColor='w',over=true,connected=false,sel=-1,targets=[],lastMove=null,keys=[],moveTxt=[],pendingPromo=null,isHost=false,legalCache=[];
+
+function startGame(color){
+  S=newState(); myColor=color; over=false; sel=-1; targets=[]; lastMove=null;
+  keys=[posKey(S)]; moveTxt=[]; pendingPromo=null;
+  legalCache=legal(S);
+  $('banner').style.display='none'; $('bRematch').style.display='none';
+  $('bDraw').disabled=false; $('bResign').disabled=false;
+  $('setup').style.display='none'; $('game').style.display='flex';
+  render();
+}
+function moveText(prev,m,next){
+  const p=prev.b[m.from], t=p.toUpperCase();
+  let s;
+  if(m.castle) s=m.to>m.from?'O-O':'O-O-O';
+  else{
+    const capt=prev.b[m.to]||m.ep;
+    s=(t==='P'?'':U[t])+sqName(m.from)+(capt?'x':'-')+sqName(m.to)+(m.promo?'='+m.promo:'');
+  }
+  if(inCheck(next)) s+=legal(next).length?'+':'#';
+  return s;
+}
+function doMove(m,remote){
+  const prev=S;
+  S=apply(S,m);
+  lastMove=m; sel=-1; targets=[];
+  keys.push(posKey(S));
+  moveTxt.push(moveText(prev,m,S));
+  legalCache=legal(S);
+  if(!remote) send({t:'move',from:m.from,to:m.to,promo:m.promo||null});
+  checkEnd();
+  render();
+}
+function checkEnd(){
+  const chk=inCheck(S);
+  if(!legalCache.length){
+    if(chk){ const winner=opp(S.turn); finish(winner===myColor?'Schachmatt – du gewinnst! 🎉':'Schachmatt – du verlierst.'); }
+    else finish('Patt – Remis.');
+  } else if(S.hm>=100) finish('Remis (50-Züge-Regel).');
+  else if(insufficient(S.b)) finish('Remis (zu wenig Material).');
+  else if(keys.filter(k=>k===keys[keys.length-1]).length>=3) finish('Remis (dreifache Stellungswiederholung).');
+}
+let endMsg='';
+function finish(msg){
+  over=true; endMsg=msg; $('bDraw').disabled=true; $('bResign').disabled=true;
+  $('bRematch').style.display=connected?'':'none'; $('banner').style.display='none'; render();
+}
+
+/* ============ Rendering ============ */
+function render(){
+  const flip=myColor==='b', bd=$('board'); bd.innerHTML='';
+  const ksq=inCheck(S)?kingSq(S.b,S.turn):-1;
+  for(let d=0;d<64;d++){
+    const i=flip?63-d:d, r=i>>3,c=i&7, p=S.b[i];
+    const el=document.createElement('div');
+    el.className='sq '+((r+c)%2?'d':'l');
+    if(lastMove&&(i===lastMove.from||i===lastMove.to)) el.classList.add('last');
+    if(i===sel) el.classList.add('sel');
+    if(i===ksq) el.classList.add('chk');
+    if(targets.includes(i)) el.classList.add(S.b[i]?'cp':'mv');
+    if(p){ const s=document.createElement('span'); s.className='pc '+col(p); s.textContent=U[p.toUpperCase()]; el.appendChild(s); }
+    const dr=Math.floor(d/8),dc=d%8;
+    if(dc===0){ const x=document.createElement('span'); x.className='co r'; x.textContent=8-r; el.appendChild(x); }
+    if(dr===7){ const x=document.createElement('span'); x.className='co f'; x.textContent='abcdefgh'[c]; el.appendChild(x); }
+    el.onclick=()=>clickSq(i);
+    bd.appendChild(el);
+  }
+  let st=`Du spielst ${myColor==='w'?'Weiß':'Schwarz'}. `;
+  if(over) st+=endMsg;
+  else st+=(S.turn===myColor?'Du bist am Zug':'Gegner ist am Zug')+(inCheck(S)?' – Schach!':'');
+  $('status').textContent=st;
+  const mv=$('moves'); mv.innerHTML='';
+  for(let i=0;i<moveTxt.length;i+=2){
+    const d=document.createElement('div');
+    d.textContent=(i/2+1)+'. '+moveTxt[i]+(moveTxt[i+1]?'   '+moveTxt[i+1]:'');
+    mv.appendChild(d);
+  }
+  mv.scrollTop=mv.scrollHeight;
+}
+function clickSq(i){
+  if(over||!connected||S.turn!==myColor||pendingPromo) return;
+  const p=S.b[i];
+  if(sel>=0&&targets.includes(i)){
+    const cands=legalCache.filter(m=>m.from===sel&&m.to===i);
+    if(cands[0].promo){ askPromo(cands); return; }
+    doMove(cands[0],false); return;
+  }
+  if(p&&col(p)===myColor){
+    sel=i; targets=legalCache.filter(m=>m.from===i).map(m=>m.to);
+  } else { sel=-1; targets=[]; }
+  render();
+}
+function askPromo(cands){
+  pendingPromo=cands;
+  const pr=$('promo'); pr.innerHTML=''; pr.style.display='flex';
+  for(const k of ['Q','R','B','N']){
+    const b=document.createElement('button'); b.textContent=U[k];
+    b.onclick=()=>{ pr.style.display='none'; const m=cands.find(x=>x.promo===k); pendingPromo=null; doMove(m,false); };
+    pr.appendChild(b);
+  }
+}
+
+/* ============ WebRTC ============ */
+let pc,dc;
+function makePC(){
+  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]});
+  pc.onconnectionstatechange=()=>{ if(['failed','closed','disconnected'].includes(pc.connectionState)) onClosed(); };
+}
+function waitIce(){
+  return new Promise(res=>{
+    if(pc.iceGatheringState==='complete') return res();
+    const f=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',f); res(); } };
+    pc.addEventListener('icegatheringstatechange',f);
+    setTimeout(res,6000);
+  });
+}
+const enc=o=>btoa(JSON.stringify(o));
+const dec=s=>JSON.parse(atob(s.trim()));
+function copy(id){ const t=$(id); t.select(); navigator.clipboard?.writeText(t.value).catch(()=>document.execCommand('copy')); }
+function setupDC(){
+  dc.onopen=()=>{
+    connected=true; $('dot').classList.add('on'); $('conn').textContent='Verbunden';
+    if(isHost){ const gc=Math.random()<.5?'w':'b'; send({t:'start',color:gc}); startGame(opp(gc)); }
+  };
+  dc.onmessage=e=>onMsg(JSON.parse(e.data));
+  dc.onclose=onClosed;
+}
+function onClosed(){
+  if(!connected) return;
+  connected=false; $('dot').classList.remove('on'); $('conn').textContent='Verbindung getrennt';
+  if(!over){ over=true; endMsg='Verbindung zum Gegner verloren.'; render(); }
+  $('bDraw').disabled=true; $('bResign').disabled=true; $('bRematch').style.display='none';
+}
+function send(o){ if(dc&&dc.readyState==='open') dc.send(JSON.stringify(o)); }
+
+$('bHost').onclick=async()=>{
+  isHost=true; $('hostBox').style.display=''; $('joinBox').style.display='none'; $('setupMsg').textContent='';
+  try{
+    makePC(); dc=pc.createDataChannel('chess'); setupDC();
+    await pc.setLocalDescription(await pc.createOffer());
+    $('offerOut').value='Sammle Verbindungsdaten …';
+    await waitIce();
+    $('offerOut').value=enc(pc.localDescription);
+  }catch(e){ $('setupMsg').textContent='Fehler: '+e.message; }
+};
+$('bAccept').onclick=async()=>{
+  try{ await pc.setRemoteDescription(dec($('answerIn').value)); $('setupMsg').textContent='Verbinde …'; }
+  catch(e){ $('setupMsg').textContent='Ungültiger Antwort-Code.'; }
+};
+$('bJoin').onclick=()=>{ isHost=false; $('joinBox').style.display=''; $('hostBox').style.display='none'; $('setupMsg').textContent=''; };
+$('bAnswer').onclick=async()=>{
+  try{
+    makePC(); pc.ondatachannel=e=>{ dc=e.channel; setupDC(); };
+    await pc.setRemoteDescription(dec($('offerIn').value));
+    await pc.setLocalDescription(await pc.createAnswer());
+    $('answerOut').value='Sammle Verbindungsdaten …';
+    await waitIce();
+    $('answerOut').value=enc(pc.localDescription);
+    $('setupMsg').textContent='Warte, bis der Gastgeber deinen Code eingefügt hat …';
+  }catch(e){ $('setupMsg').textContent='Ungültiger Code des Gastgebers.'; }
+};
+
+/* ============ Nachrichten ============ */
+function onMsg(m){
+  if(m.t==='start') startGame(m.color);
+  else if(m.t==='move'){
+    if(over||S.turn===myColor) return;
+    const mv=legalCache.find(x=>x.from===m.from&&x.to===m.to&&(x.promo||null)===(m.promo||null));
+    if(mv) doMove(mv,true);
+  }
+  else if(m.t==='resign'){ if(!over) finish('Der Gegner hat aufgegeben – du gewinnst! 🎉'); }
+  else if(m.t==='offer') showOffer(m.kind);
+  else if(m.t==='reply'){
+    if(m.ok){
+      if(m.kind==='draw'&&!over) finish('Remis vereinbart.');
+      if(m.kind==='rematch') startGame(opp(myColor));
+    } else chat('System','Der Gegner hat abgelehnt.');
+  }
+  else if(m.t==='chat') chat('Gegner',m.text);
+}
+function showOffer(kind){
+  const b=$('banner'); b.style.display='block'; b.innerHTML='';
+  b.append(kind==='draw'?'Dein Gegner bietet Remis an. ':'Dein Gegner möchte eine Revanche (Farben getauscht). ');
+  const y=document.createElement('button'), n=document.createElement('button');
+  y.textContent='Annehmen'; n.textContent='Ablehnen'; n.className='sec'; n.style.marginLeft='6px';
+  y.onclick=()=>{ b.style.display='none'; send({t:'reply',kind,ok:true});
+    if(kind==='draw'&&!over) finish('Remis vereinbart.'); if(kind==='rematch') startGame(opp(myColor)); };
+  n.onclick=()=>{ b.style.display='none'; send({t:'reply',kind,ok:false}); };
+  b.append(y,n);
+}
+$('bDraw').onclick=()=>{ send({t:'offer',kind:'draw'}); chat('System','Remis-Angebot gesendet.'); };
+$('bResign').onclick=()=>{ if(over) return; if(confirm('Wirklich aufgeben?')){ send({t:'resign'}); finish('Du hast aufgegeben.'); } };
+$('bRematch').onclick=()=>{ send({t:'offer',kind:'rematch'}); chat('System','Revanche angefragt.'); };
+function chat(who,text){
+  const d=document.createElement('div'); const b=document.createElement('b');
+  b.textContent=who+': '; d.append(b,document.createTextNode(text));
+  $('chatlog').appendChild(d); $('chatlog').scrollTop=1e9;
+}
+$('chatIn').onkeydown=e=>{
+  if(e.key==='Enter'&&e.target.value.trim()){ const t=e.target.value.trim(); send({t:'chat',text:t}); chat('Du',t); e.target.value=''; }
+};
+</script>
+</body>
+</html>
